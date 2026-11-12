@@ -22,7 +22,13 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
+import android.content.Context
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.Renderer
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
+import androidx.media3.exoplayer.video.MediaCodecVideoRenderer
+import androidx.media3.exoplayer.video.VideoRendererEventListener
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
@@ -55,8 +61,6 @@ class MainActivity : Activity() {
     private lateinit var bigView: PlayerView
     private lateinit var smallView: PlayerView
     private lateinit var smallBox: LinearLayout
-    private lateinit var smallNum: TextView
-    private lateinit var smallName: TextView
     private lateinit var bannerBox: LinearLayout
     private lateinit var bannerNum: TextView
     private lateinit var bannerName: TextView
@@ -182,8 +186,33 @@ class MainActivity : Activity() {
         prevChannel = prevChannel?.let { p -> list.firstOrNull { it.number == p.number } }
     }
 
+    /**
+     * מעבר נגן בין המסך הגדול לפינה = החלפת המשטח שהמפענח מצייר עליו.
+     * ב-Mi Box (Amlogic) ההחלפה "המהירה" (setOutputSurface) השאירה את הווידאו במקום הישן
+     * (הגדול שחור, התמונה בפינה). לכן: בכל החלפת משטח המפענח נפתח מחדש. עולה רגע קצר, אבל אמין.
+     */
+    private class Renderers(ctx: Context) : DefaultRenderersFactory(ctx) {
+        override fun buildVideoRenderers(
+            context: Context,
+            extensionRendererMode: Int,
+            mediaCodecSelector: MediaCodecSelector,
+            enableDecoderFallback: Boolean,
+            eventHandler: Handler,
+            eventListener: VideoRendererEventListener,
+            allowedVideoJoiningTimeMs: Long,
+            out: ArrayList<Renderer>,
+        ) {
+            out.add(object : MediaCodecVideoRenderer(
+                context, mediaCodecSelector, allowedVideoJoiningTimeMs,
+                enableDecoderFallback, eventHandler, eventListener, 50,
+            ) {
+                override fun codecNeedsSetOutputSurfaceWorkaround(name: String) = true
+            })
+        }
+    }
+
     private fun newPlayer(): ExoPlayer {
-        val p = ExoPlayer.Builder(this).build()
+        val p = ExoPlayer.Builder(this, Renderers(this)).build()
         p.addListener(object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
                 val slot = if (main.player === p) main else pip
@@ -244,29 +273,10 @@ class MainActivity : Activity() {
         }
         // הווידאו הקטן מעל הגדול
         (smallView.videoSurfaceView as? SurfaceView)?.setZOrderMediaOverlay(true)
-        smallNum = text(16f, Color.rgb(20, 20, 20), bold = true).apply {
-            setShadowLayer(0f, 0f, 0f, 0)
-            setPadding(dp(8), dp(1), dp(8), dp(1))
-            background = rounded(accent, 5)
-        }
-        smallName = text(15f).apply { setPadding(dp(8), 0, dp(8), 0) }
-        val back = text(13f, Color.argb(220, 255, 255, 255)).apply { this.text = "OK = חזרה" }
-        val labelRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(8), dp(6), dp(8), dp(6))
-            addView(smallNum)
-            addView(smallName, LinearLayout.LayoutParams(0, -2, 1f))
-            addView(back)
-        }
+        // בלי מסגרת ובלי כיתוב: רק הווידאו, שיפריע כמה שפחות
         smallBox = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(3), dp(3), dp(3), 0)
-            background = rounded(glass, 10, accent)
             addView(smallView, LinearLayout.LayoutParams(w, h))
-            addView(labelRow, LinearLayout.LayoutParams(w, -2))
             visibility = View.GONE
-            elevation = dp(6).toFloat()
         }
         root.addView(smallBox, FrameLayout.LayoutParams(-2, -2))
 
@@ -439,12 +449,6 @@ class MainActivity : Activity() {
         ui.postDelayed(hideHelp, ms)
     }
 
-    private fun updateSmallLabel() {
-        val ch = pip.channel
-        smallNum.text = ch?.number?.toString() ?: ""
-        smallName.text = ch?.name ?: ""
-    }
-
     // ---------- פעולות ----------
 
     private fun savePrefs() {
@@ -476,7 +480,6 @@ class MainActivity : Activity() {
             ?: channels.firstOrNull { it.number != cur.number } ?: return
         swapSlots()
         pipOn = true
-        updateSmallLabel()
         fadeIn(smallBox)
         main.play(target)
         prevChannel = cur
@@ -502,10 +505,11 @@ class MainActivity : Activity() {
 
     private fun closePip() {
         pipOn = false
-        smallBox.animate().cancel()
-        smallBox.visibility = View.GONE
+        smallView.player = null      // קודם לנתק את הפינה מהנגן, ורק אז לעצור ולהסתיר
         pip.stop()
         pip.channel = null
+        smallBox.animate().cancel()
+        smallBox.visibility = View.GONE
     }
 
     private fun moveCorner(dir: Int) {
