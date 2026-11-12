@@ -1,0 +1,26 @@
+# זפזפן - מסמך המשך לסשנים
+
+**תמיד לכתוב למשתמש בעברית בלבד**, מימין לשמאל, בלי מקף ארוך.
+
+## מטרה (12/11/2026)
+אפליקציית Android TV רזה, 8 ערוצים (11, 12, 13, 14, 15=i24, 16, 23, 99), עם תמונה בתוך תמונה כדי לזפזפ בזמן פרסומות ולראות בפינה מתי חוזרים. מכשיר: Xiaomi Mi Box.
+
+## מקור הידע
+פירוק של masach-tv 0.4.0 (yevgavrikov, הריפו נמחק מ-GitHub). שם: רשימת ערוצים `lineup.json` + שרת Cloudflare שמעדכן אותה ובודק תקינות (`health`), נגן Media3, מודולים לכל ספק. לא הועתק קוד (מקומפל ומוסתר), רק כתובות ותהליך הכרטיס של קשת. הכל נשען על הידע של תוסף Kodi ‏Idan Plus.
+- קשת: `mass.mako.co.il/ClicksStatistics/entitlementsServicesV2.jsp?et=ngt&lp=<נתיב>&rv=AKAMAI` -> `caseId` 1 + `tickets[0].ticket` -> `https://mako-streaming.akamaized.net<נתיב>?<כרטיס>`. ‏caseId 4 = דורש התחברות: לא עוקפים.
+- "בלי פרסומות" במסך = רק לא טוענים את נגן הפרסומות של האתרים. פרסומות בשידור החי נשארות.
+
+## מבנה
+- `lineup/channels.json`: הערוצים (type hls / keshet). נארז ב-APK ומורד מ-raw.githubusercontent בכל הפעלה (דורש ריפו ציבורי).
+- `app/.../MainActivity.kt`: שני נגנים (Slot), החלפה = החלפת PlayerView בלבד. ‏`Resolver.kt`: כרטיס קשת. ‏`Channels.kt`: טעינה ו-HTTP.
+- חתימה: מפתח קבוע בסודות GitHub ‏`KEYSTORE_B64` (ה-jks ב-base64) ו-`KEYSTORE_PASS`. לא בריפו. בנייה מקומית בלי הסודות = חתימת debug.
+- `build.yml`: APK לכל דחיפה ל-main, גרסה v0.1.<run>, קישור קבוע releases/latest/download/zapper-tv.apk.
+- `upstream.yml` + `scripts/check_upstream.py`: השוואה יומית לרשימה של מסך, Issue בהבדל. מתעלם מ-DASH.
+
+## מגבלות סביבה
+- הסשן חוסם גישה מכאן לזרמים ולשרת הכרטיסים של mako, אז הבדיקה האמיתית רק על הטלוויזיה. השרתים בחו"ל ממילא חסומים גאוגרפית לחלק מהזרמים.
+- Maven Central מחזיר לפעמים 429: לבנות עם `--max-workers=1` ולנסות שוב.
+
+## פתוח
+- בדיקה ראשונה על ה-Mi Box: שני מפענחים בבת אחת, z-order של הפינה, שלט.
+- אולי: זיהוי אוטומטי של סוף הפרסומות (לוגו הערוץ), התראה על המסך.

@@ -1,0 +1,42 @@
+name: build
+
+# כל דחיפה ל-main שמשנה קוד: בונה APK ומפרסם אותו בגרסה "latest".
+# קישור הורדה קבוע: https://github.com/evyatar-elad/zapper-tv/releases/latest/download/zapper-tv.apk
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['lineup/**', '**.md']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then echo "::error::חסר הסוד KEYSTORE_B64 (ראה README)"; exit 1; fi
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/zapper.jks"
+          echo "KEYSTORE_FILE=$RUNNER_TEMP/zapper.jks" >> "$GITHUB_ENV"
+      - name: Build
+        env:
+          KEYSTORE_PASS: ${{ secrets.KEYSTORE_PASS }}
+        run: ./gradlew assembleRelease --console=plain
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/release/app-release.apk zapper-tv.apk
+          TAG="v0.1.${GITHUB_RUN_NUMBER}"
+          gh release create "$TAG" zapper-tv.apk --title "זפזפן $TAG" \
+            --notes "קומיט ${GITHUB_SHA::7}. להתקנה: Downloader בטלוויזיה עם הקישור https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/zapper-tv.apk" \
+            --latest

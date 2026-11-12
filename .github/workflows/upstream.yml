@@ -1,0 +1,35 @@
+name: upstream
+
+# פעם ביום: משווה את הכתובות שלנו לרשימה של אפליקציית "מסך" (שמתוחזקת ונבדקת אצלם).
+# אם יש שם כתובת חדשה, או שכתובת שלנו מסומנת אצלם כתקולה - נפתח Issue (מגיע במייל).
+# לא משנים את הרשימה אוטומטית: כתובת זרה נכנסת רק אחרי בדיקה.
+on:
+  schedule:
+    - cron: '17 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare
+        id: cmp
+        run: python3 scripts/check_upstream.py > report.md; echo "changed=$?" >> "$GITHUB_OUTPUT"
+        continue-on-error: true
+      - name: Open issue
+        if: hashFiles('report.md') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ -s report.md ] || exit 0
+          TITLE="עדכון כתובות ערוצים ($(date +%d/%m))"
+          # לא לפתוח שוב על אותו ממצא: משווים לגוף ה-Issue הפתוח האחרון
+          LAST=$(gh issue list --label upstream --state open --limit 1 --json body -q '.[0].body' || true)
+          if [ "$LAST" = "$(cat report.md)" ]; then echo "same as open issue"; exit 0; fi
+          gh label create upstream --color FBCA04 2>/dev/null || true
+          gh issue create --title "$TITLE" --label upstream --body-file report.md
