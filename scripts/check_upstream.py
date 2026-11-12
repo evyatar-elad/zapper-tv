@@ -11,7 +11,7 @@ from pathlib import Path
 UPSTREAM = "https://masach-lineup.yev-gavrikov.workers.dev/v1/lineup.json"
 # מזהה אצלם -> מספר ערוץ אצלנו
 IDS = {"ch_11": 11, "ch_12": 12, "ch_13": 13, "ch_14": 14,
-       "ch_i24news": 15, "ch_16tv": 16, "ch_23": 23, "ch_99": 99}
+       "ch_i24news": 15, "ch_16tv": 16, "ch_99": 99}
 
 
 def key(module, details):

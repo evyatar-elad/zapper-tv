@@ -33,11 +33,11 @@ import java.util.concurrent.Executors
  *
  * שלט:
  *   OK      - אין פינה: הערוץ הנוכחי עובר לפינה, והמסך הגדול עובר לערוץ הקודם.
- *             יש פינה: החלפה בין הגדול לקטן (מיידית, בלי טעינה מחדש).
+ *             יש פינה: הערוץ שבפינה חוזר למסך הגדול (מיד, בלי טעינה) והפינה נסגרת.
  *   ↑ / ↓   - ערוץ הבא / הקודם במסך הגדול (גם כפתורי CH+/CH-).
  *   ← / →   - הזזת הפינה (כשיש פינה).
  *   ספרות   - מעבר ישיר לערוץ (למשל 1 ואז 2 = ערוץ 12).
- *   חזור    - סגירת הפינה; בלי פינה: לחיצה כפולה ליציאה.
+ *   חזור    - סגירת הפינה בלי לחזור אליה; בלי פינה: לחיצה כפולה ליציאה.
  *   תפריט   - עזרה.
  */
 @OptIn(UnstableApi::class)
@@ -46,12 +46,22 @@ class MainActivity : Activity() {
     private val ui = Handler(Looper.getMainLooper())
     private val io = Executors.newCachedThreadPool()
 
+    // צבעים
+    private val accent = Color.rgb(245, 158, 11)        // כתום
+    private val navy = Color.rgb(30, 58, 138)
+    private val glass = Color.argb(200, 12, 18, 32)
+
+    private lateinit var root: FrameLayout
     private lateinit var bigView: PlayerView
     private lateinit var smallView: PlayerView
     private lateinit var smallBox: LinearLayout
-    private lateinit var smallLabel: TextView
-    private lateinit var banner: TextView
-    private lateinit var hint: TextView
+    private lateinit var smallNum: TextView
+    private lateinit var smallName: TextView
+    private lateinit var bannerBox: LinearLayout
+    private lateinit var bannerNum: TextView
+    private lateinit var bannerName: TextView
+    private lateinit var bannerStatus: TextView
+    private lateinit var helpCard: LinearLayout
 
     private var channels: List<Channel> = emptyList()
     private lateinit var main: Slot
@@ -84,7 +94,7 @@ class MainActivity : Activity() {
             if (sourceIdx >= ch.sources.size) {
                 // כל המקורות נכשלו: הודעה, וניסיון חוזר עוד מעט
                 failedRounds++
-                if (this === main) showBanner("${ch.label}: לא זמין כרגע, מנסה שוב...", 6000)
+                if (this === main) showChannel(ch, "לא זמין כרגע · מנסה שוב...", 6000)
                 sourceIdx = 0
                 val t = ++token
                 ui.postDelayed({ if (token == t && channel == ch) tryCurrent() }, if (failedRounds < 3) 5000L else 30000L)
@@ -97,7 +107,7 @@ class MainActivity : Activity() {
                 ui.post {
                     if (token != t || isFinishing) return@post
                     r.onSuccess { start(it) }.onFailure {
-                        if (this === main) showBanner("${ch.label}: ${it.message ?: "שגיאה"}", 3000)
+                        if (this === main) showChannel(ch, it.message ?: "שגיאה", 3000)
                         sourceIdx++
                         tryCurrent()
                     }
@@ -158,8 +168,8 @@ class MainActivity : Activity() {
         val last = prefs.getInt("last", 12)
         main.play(channels.firstOrNull { it.number == last } ?: channels.first())
         prevChannel = channels.firstOrNull { it.number == prefs.getInt("prev", 11) }
-        showBanner(main.channel!!.label)
-        showHint(8000)
+        showChannel(main.channel!!, null, 4000)
+        showHelp(10000)
         started = true
     }
 
@@ -187,8 +197,34 @@ class MainActivity : Activity() {
 
     private fun dp(v: Int) = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics).toInt()
 
+    private fun rounded(color: Int, radiusDp: Int, strokeColor: Int? = null) = GradientDrawable().apply {
+        setColor(color)
+        cornerRadius = dp(radiusDp).toFloat()
+        if (strokeColor != null) setStroke(dp(2), strokeColor)
+    }
+
+    private fun text(sp: Float, color: Int = Color.WHITE, bold: Boolean = false) = TextView(this).apply {
+        setTextColor(color)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, sp)
+        if (bold) setTypeface(Typeface.DEFAULT_BOLD)
+        setShadowLayer(4f, 0f, 1f, Color.argb(160, 0, 0, 0))
+    }
+
+    /** "מקש" מעוצב לעזרה: כתום עם טקסט כהה. */
+    private fun keyChip(label: String) = text(17f, Color.rgb(20, 20, 20), bold = true).apply {
+        this.text = label
+        setShadowLayer(0f, 0f, 0f, 0)
+        gravity = Gravity.CENTER
+        minWidth = dp(64)
+        setPadding(dp(12), dp(4), dp(12), dp(4))
+        background = rounded(accent, 8)
+    }
+
     private fun buildUi() {
-        val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
+        root = FrameLayout(this).apply {
+            setBackgroundColor(Color.BLACK)
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+        }
 
         bigView = PlayerView(this).apply {
             useController = false
@@ -197,7 +233,7 @@ class MainActivity : Activity() {
         }
         root.addView(bigView, FrameLayout.LayoutParams(-1, -1))
 
-        // הפינה: וידאו קטן + תווית, עם מסגרת
+        // ---- הפינה: וידאו קטן + שורת שם, במסגרת כתומה ----
         val w = resources.displayMetrics.widthPixels * 30 / 100
         val h = w * 9 / 16
         smallView = PlayerView(this).apply {
@@ -208,50 +244,113 @@ class MainActivity : Activity() {
         }
         // הווידאו הקטן מעל הגדול
         (smallView.videoSurfaceView as? SurfaceView)?.setZOrderMediaOverlay(true)
-        smallLabel = TextView(this).apply {
-            setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            setPadding(dp(8), dp(2), dp(8), dp(4))
-            gravity = Gravity.CENTER
+        smallNum = text(16f, Color.rgb(20, 20, 20), bold = true).apply {
+            setShadowLayer(0f, 0f, 0f, 0)
+            setPadding(dp(8), dp(1), dp(8), dp(1))
+            background = rounded(accent, 5)
+        }
+        smallName = text(15f).apply { setPadding(dp(8), 0, dp(8), 0) }
+        val back = text(13f, Color.argb(220, 255, 255, 255)).apply { this.text = "OK = חזרה" }
+        val labelRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(8), dp(6), dp(8), dp(6))
+            addView(smallNum)
+            addView(smallName, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(back)
         }
         smallBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(3), dp(3), dp(3), 0)
-            background = GradientDrawable().apply {
-                setColor(Color.argb(230, 30, 58, 138))
-                cornerRadius = dp(6).toFloat()
-            }
+            background = rounded(glass, 10, accent)
             addView(smallView, LinearLayout.LayoutParams(w, h))
-            addView(smallLabel, LinearLayout.LayoutParams(w, -2))
+            addView(labelRow, LinearLayout.LayoutParams(w, -2))
             visibility = View.GONE
+            elevation = dp(6).toFloat()
         }
         root.addView(smallBox, FrameLayout.LayoutParams(-2, -2))
 
-        banner = overlayText(28f, Typeface.BOLD)
-        root.addView(banner, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply {
-            setMargins(dp(40), dp(32), dp(40), 0)
-        })
-
-        hint = overlayText(17f, Typeface.NORMAL).apply {
-            text = "OK: ערוץ לפינה / החלפה   ·   ↑↓: ערוץ   ·   ←→: הזזת הפינה   ·   ספרות: ערוץ ישיר   ·   חזור: סגירת הפינה"
+        // ---- באנר ערוץ: מספר בתג כתום + שם + שורת מצב ----
+        bannerNum = text(34f, Color.rgb(20, 20, 20), bold = true).apply {
+            setShadowLayer(0f, 0f, 0f, 0)
+            gravity = Gravity.CENTER
+            minWidth = dp(72)
+            setPadding(dp(14), dp(2), dp(14), dp(2))
+            background = rounded(accent, 12)
         }
-        root.addView(hint, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
-            setMargins(dp(40), 0, dp(40), dp(28))
+        bannerName = text(28f, bold = true)
+        bannerStatus = text(17f, Color.rgb(253, 211, 77)).apply { visibility = View.GONE }
+        val nameCol = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), 0, dp(4), 0)
+            addView(bannerName)
+            addView(bannerStatus)
+        }
+        bannerBox = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), dp(12), dp(22), dp(12))
+            background = rounded(glass, 16)
+            addView(bannerNum)
+            addView(nameCol)
+            visibility = View.GONE
+            alpha = 0f
+        }
+        root.addView(bannerBox, FrameLayout.LayoutParams(-2, -2))
+
+        // ---- כרטיס עזרה ----
+        helpCard = buildHelpCard()
+        root.addView(helpCard, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
+            setMargins(dp(40), 0, dp(40), dp(36))
         })
 
         setContentView(root)
     }
 
-    private fun overlayText(sp: Float, style: Int) = TextView(this).apply {
-        setTextColor(Color.WHITE)
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, sp)
-        setTypeface(typeface, style)
-        setPadding(dp(16), dp(8), dp(16), dp(8))
-        background = GradientDrawable().apply {
-            setColor(Color.argb(170, 0, 0, 0))
-            cornerRadius = dp(8).toFloat()
+    private fun buildHelpCard(): LinearLayout {
+        val rows = listOf(
+            "OK" to "פרסומות? הערוץ עובר לפינה, ואתם לערוץ הקודם",
+            "OK" to "נגמרו? חוזרים לערוץ שבפינה, והפינה נסגרת",
+            "▲ ▼" to "החלפת ערוץ",
+            "◀ ▶" to "הזזת הפינה",
+            "1 2" to "מעבר ישיר לערוץ",
+            "חזור" to "סגירת הפינה בלי לחזור אליה",
+        )
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(28), dp(18), dp(28), dp(16))
+            background = rounded(glass, 18)
+            visibility = View.GONE
+            alpha = 0f
         }
-        visibility = View.GONE
+        card.addView(text(22f, bold = true).apply {
+            this.text = "זפזפן · איך משתמשים"
+            setPadding(0, 0, 0, dp(10))
+        })
+        // שתי עמודות של שורות
+        val cols = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        rows.chunked(3).forEach { chunk ->
+            val col = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(0, 0, 0, 0)
+            }
+            chunk.forEach { (key, desc) ->
+                col.addView(LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(0, dp(5), 0, dp(5))
+                    addView(keyChip(key))
+                    addView(text(17f).apply { this.text = desc; setPadding(dp(12), 0, 0, 0) })
+                })
+            }
+            cols.addView(col, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(36) })
+        }
+        card.addView(cols)
+        card.addView(text(14f, Color.argb(180, 255, 255, 255)).apply {
+            this.text = "כפתור התפריט בשלט מציג את העזרה שוב"
+            setPadding(0, dp(10), 0, 0)
+        })
+        return card
     }
 
     private fun placeSmallBox() {
@@ -264,9 +363,9 @@ class MainActivity : Activity() {
         smallBox.layoutParams = FrameLayout.LayoutParams(-2, -2, g).apply {
             setMargins(dp(36), dp(28), dp(36), dp(28))
         }
-        // הבאנר בצד השני מהפינה, שלא יסתירו זה את זה
-        val bannerRight = corner == 3 || corner == 2
-        banner.layoutParams = FrameLayout.LayoutParams(-2, -2, Gravity.TOP or (if (bannerRight) Gravity.RIGHT else Gravity.LEFT)).apply {
+        // הבאנר למעלה, בצד שאין בו פינה
+        val bannerLeft = corner == 0 || corner == 1
+        bannerBox.layoutParams = FrameLayout.LayoutParams(-2, -2, Gravity.TOP or (if (bannerLeft) Gravity.LEFT else Gravity.RIGHT)).apply {
             setMargins(dp(40), dp(32), dp(40), 0)
         }
     }
@@ -292,34 +391,75 @@ class MainActivity : Activity() {
             .build()
     }
 
-    private fun showBanner(text: String, ms: Long = 3000) {
-        banner.text = text
-        banner.visibility = View.VISIBLE
+    private fun fadeIn(v: View) {
+        v.animate().cancel()
+        if (v.visibility != View.VISIBLE) { v.alpha = 0f; v.visibility = View.VISIBLE }
+        v.animate().alpha(1f).setDuration(180).start()
+    }
+
+    private fun fadeOut(v: View) {
+        v.animate().cancel()
+        v.animate().alpha(0f).setDuration(300).withEndAction { v.visibility = View.GONE }.start()
+    }
+
+    private val hideBanner = Runnable { fadeOut(bannerBox) }
+    private val hideHelp = Runnable { fadeOut(helpCard) }
+
+    /** באנר ערוץ: מספר, שם, ושורת מצב אופציונלית (שגיאה / הודעה). */
+    private fun showChannel(ch: Channel, status: String?, ms: Long = 3000) {
+        bannerNum.visibility = View.VISIBLE
+        bannerNum.text = ch.number.toString()
+        bannerName.text = ch.name
+        setStatus(status)
+        popBanner(ms)
+    }
+
+    /** באנר בלי ערוץ: הודעה קצרה (הקלדת מספר, יציאה). */
+    private fun showMessage(big: String, status: String? = null, ms: Long = 2000) {
+        bannerNum.visibility = View.GONE
+        bannerName.text = big
+        setStatus(status)
+        popBanner(ms)
+    }
+
+    private fun setStatus(status: String?) {
+        bannerStatus.text = status ?: ""
+        bannerStatus.visibility = if (status.isNullOrEmpty()) View.GONE else View.VISIBLE
+    }
+
+    private fun popBanner(ms: Long) {
+        fadeIn(bannerBox)
         ui.removeCallbacks(hideBanner)
         ui.postDelayed(hideBanner, ms)
     }
 
-    private val hideBanner = Runnable { banner.visibility = View.GONE }
-    private val hideHint = Runnable { hint.visibility = View.GONE }
-
-    private fun showHint(ms: Long) {
-        hint.visibility = View.VISIBLE
-        ui.removeCallbacks(hideHint)
-        ui.postDelayed(hideHint, ms)
+    private fun showHelp(ms: Long) {
+        fadeIn(helpCard)
+        ui.removeCallbacks(hideHelp)
+        ui.postDelayed(hideHelp, ms)
     }
 
     private fun updateSmallLabel() {
-        smallLabel.text = pip.channel?.let { "${it.label}  ·  OK לחזרה" } ?: ""
+        val ch = pip.channel
+        smallNum.text = ch?.number?.toString() ?: ""
+        smallName.text = ch?.name ?: ""
     }
 
     // ---------- פעולות ----------
+
+    private fun savePrefs() {
+        prefs.edit()
+            .putInt("last", main.channel?.number ?: 12)
+            .putInt("prev", prevChannel?.number ?: 11)
+            .apply()
+    }
 
     private fun setMain(ch: Channel) {
         val cur = main.channel
         if (cur != null && cur.number != ch.number) prevChannel = cur
         main.play(ch)
-        showBanner(ch.label)
-        prefs.edit().putInt("last", ch.number).putInt("prev", prevChannel?.number ?: 11).apply()
+        showChannel(ch, if (pipOn) "OK = חזרה ל-${pip.channel?.name ?: ""}" else null)
+        savePrefs()
     }
 
     private fun zap(dir: Int) {
@@ -336,23 +476,22 @@ class MainActivity : Activity() {
             ?: channels.firstOrNull { it.number != cur.number } ?: return
         swapSlots()
         pipOn = true
-        smallBox.visibility = View.VISIBLE
         updateSmallLabel()
+        fadeIn(smallBox)
         main.play(target)
         prevChannel = cur
-        showBanner(target.label)
-        prefs.edit().putInt("last", target.number).putInt("prev", cur.number).apply()
+        showChannel(target, "${cur.name} ממתין בפינה · OK לחזרה")
+        savePrefs()
     }
 
-    /** OK עם פינה: החלפה מיידית. שני הנגנים ממשיכים לרוץ, רק מתחלפים מסכים. */
-    private fun swapPip() {
+    /** OK עם פינה: הערוץ שבפינה חוזר למסך הגדול (מיד, הוא כבר מתנגן), והפינה נסגרת. */
+    private fun returnFromPip() {
+        val leaving = main.channel
         swapSlots()
-        updateSmallLabel()
-        main.channel?.let {
-            showBanner(it.label)
-            prevChannel = pip.channel
-            prefs.edit().putInt("last", it.number).putInt("prev", pip.channel?.number ?: 11).apply()
-        }
+        closePip()
+        prevChannel = leaving
+        main.channel?.let { showChannel(it, null) }
+        savePrefs()
     }
 
     private fun swapSlots() {
@@ -363,6 +502,7 @@ class MainActivity : Activity() {
 
     private fun closePip() {
         pipOn = false
+        smallBox.animate().cancel()
         smallBox.visibility = View.GONE
         pip.stop()
         pip.channel = null
@@ -378,12 +518,13 @@ class MainActivity : Activity() {
         val n = digits.toIntOrNull()
         digits = ""
         val ch = channels.firstOrNull { it.number == n }
-        if (ch != null) setMain(ch) else showBanner("אין ערוץ $n", 2000)
+        if (ch != null) setMain(ch)
+        else showMessage("אין ערוץ $n", "ערוצים: " + channels.joinToString(" · ") { it.number.toString() }, 3000)
     }
 
     private fun typeDigit(d: Int) {
         digits += d
-        showBanner(digits + "_", 2000)
+        showMessage(digits + "_", null, 2000)
         ui.removeCallbacks(commitDigits)
         if (digits.length >= 2) ui.post(commitDigits) else ui.postDelayed(commitDigits, 1500)
     }
@@ -394,18 +535,19 @@ class MainActivity : Activity() {
             KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_CHANNEL_DOWN -> zap(-1)
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER,
             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
-                if (event.repeatCount == 0) { if (pipOn) swapPip() else openPip() }
+                if (event.repeatCount == 0) { if (pipOn) returnFromPip() else openPip() }
             }
-            KeyEvent.KEYCODE_DPAD_RIGHT -> if (pipOn) moveCorner(+1) else showHint(5000)
-            KeyEvent.KEYCODE_DPAD_LEFT -> if (pipOn) moveCorner(-1) else showHint(5000)
-            KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_INFO, KeyEvent.KEYCODE_GUIDE -> showHint(8000)
+            KeyEvent.KEYCODE_DPAD_RIGHT -> if (pipOn) moveCorner(+1) else showHelp(8000)
+            KeyEvent.KEYCODE_DPAD_LEFT -> if (pipOn) moveCorner(-1) else showHelp(8000)
+            KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_INFO, KeyEvent.KEYCODE_GUIDE -> showHelp(12000)
             in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9 -> typeDigit(keyCode - KeyEvent.KEYCODE_0)
             KeyEvent.KEYCODE_BACK -> {
-                if (pipOn) closePip()
+                if (helpCard.visibility == View.VISIBLE) { ui.removeCallbacks(hideHelp); fadeOut(helpCard) }
+                else if (pipOn) closePip()
                 else {
                     val now = System.currentTimeMillis()
                     if (now - lastBack < 2000) finish()
-                    else { lastBack = now; showBanner("לחיצה נוספת על חזור ליציאה", 2000) }
+                    else { lastBack = now; showMessage("ליציאה: עוד לחיצה על חזור", null, 2000) }
                 }
             }
             else -> return super.onKeyDown(keyCode, event)
