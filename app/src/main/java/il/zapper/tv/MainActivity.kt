@@ -10,7 +10,6 @@ import android.os.Looper
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.KeyEvent
-import android.view.SurfaceView
 import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
@@ -39,11 +38,11 @@ import java.util.concurrent.Executors
  *
  * שלט:
  *   OK      - אין פינה: הערוץ הנוכחי עובר לפינה, והמסך הגדול עובר לערוץ הקודם.
- *             יש פינה: הערוץ שבפינה חוזר למסך הגדול (מיד, בלי טעינה) והפינה נסגרת.
+ *             יש פינה: החלפה בין הגדול לפינה.
  *   ↑ / ↓   - ערוץ הבא / הקודם במסך הגדול (גם כפתורי CH+/CH-).
  *   ← / →   - הזזת הפינה (כשיש פינה).
  *   ספרות   - מעבר ישיר לערוץ (למשל 1 ואז 2 = ערוץ 12).
- *   חזור    - סגירת הפינה בלי לחזור אליה; בלי פינה: לחיצה כפולה ליציאה.
+ *   חזור    - סגירת הפינה; בלי פינה: לחיצה כפולה ליציאה.
  *   תפריט   - עזרה.
  */
 @OptIn(UnstableApi::class)
@@ -265,14 +264,7 @@ class MainActivity : Activity() {
         // ---- הפינה: וידאו קטן + שורת שם, במסגרת כתומה ----
         val w = resources.displayMetrics.widthPixels * 30 / 100
         val h = w * 9 / 16
-        smallView = PlayerView(this).apply {
-            useController = false
-            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-            isFocusable = false
-            setShutterBackgroundColor(Color.BLACK)
-        }
-        // הווידאו הקטן מעל הגדול
-        (smallView.videoSurfaceView as? SurfaceView)?.setZOrderMediaOverlay(true)
+        smallView = layoutInflater.inflate(R.layout.small_player, null) as PlayerView
         // בלי מסגרת ובלי כיתוב: רק הווידאו, שיפריע כמה שפחות
         smallBox = LinearLayout(this).apply {
             addView(smallView, LinearLayout.LayoutParams(w, h))
@@ -320,11 +312,11 @@ class MainActivity : Activity() {
     private fun buildHelpCard(): LinearLayout {
         val rows = listOf(
             "OK" to "פרסומות? הערוץ עובר לפינה, ואתם לערוץ הקודם",
-            "OK" to "נגמרו? חוזרים לערוץ שבפינה, והפינה נסגרת",
+            "OK" to "נגמרו? החלפה: הערוץ שבפינה חוזר לגדול",
             "▲ ▼" to "החלפת ערוץ",
             "◀ ▶" to "הזזת הפינה",
             "1 2" to "מעבר ישיר לערוץ",
-            "חזור" to "סגירת הפינה בלי לחזור אליה",
+            "חזור" to "סגירת הפינה",
         )
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -462,7 +454,7 @@ class MainActivity : Activity() {
         val cur = main.channel
         if (cur != null && cur.number != ch.number) prevChannel = cur
         main.play(ch)
-        showChannel(ch, if (pipOn) "OK = חזרה ל-${pip.channel?.name ?: ""}" else null)
+        showChannel(ch, if (pipOn) pipStatus() else null)
         savePrefs()
     }
 
@@ -483,17 +475,17 @@ class MainActivity : Activity() {
         fadeIn(smallBox)
         main.play(target)
         prevChannel = cur
-        showChannel(target, "${cur.name} ממתין בפינה · OK לחזרה")
+        showChannel(target, pipStatus())
         savePrefs()
     }
 
-    /** OK עם פינה: הערוץ שבפינה חוזר למסך הגדול (מיד, הוא כבר מתנגן), והפינה נסגרת. */
-    private fun returnFromPip() {
-        val leaving = main.channel
+    private fun pipStatus() = "${pip.channel?.name ?: ""} בפינה · OK החלפה · חזור סוגר"
+
+    /** OK עם פינה: החלפה בין הגדול לפינה. הפינה נשארת עד לחיצה על חזור. */
+    private fun swapPip() {
         swapSlots()
-        closePip()
-        prevChannel = leaving
-        main.channel?.let { showChannel(it, null) }
+        prevChannel = pip.channel
+        main.channel?.let { showChannel(it, pipStatus()) }
         savePrefs()
     }
 
@@ -539,7 +531,7 @@ class MainActivity : Activity() {
             KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_CHANNEL_DOWN -> zap(-1)
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER,
             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
-                if (event.repeatCount == 0) { if (pipOn) returnFromPip() else openPip() }
+                if (event.repeatCount == 0) { if (pipOn) swapPip() else openPip() }
             }
             KeyEvent.KEYCODE_DPAD_RIGHT -> if (pipOn) moveCorner(+1) else showHelp(8000)
             KeyEvent.KEYCODE_DPAD_LEFT -> if (pipOn) moveCorner(-1) else showHelp(8000)
