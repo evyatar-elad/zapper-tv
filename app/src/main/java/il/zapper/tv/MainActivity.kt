@@ -49,7 +49,7 @@ import java.util.concurrent.Executors
  *   ← / →   - הזזת הפינה (כשיש פינה).
  *   ספרות   - מעבר ישיר לערוץ (למשל 1 ואז 2 = ערוץ 12).
  *   חזור    - סגירת הפינה; בלי פינה: לחיצה כפולה ליציאה.
- *   ☰ תפריט - לוח שידורים של הערוץ (↑↓ דפדוף בתכניות).
+ *   OK ארוך - לוח שידורים של הערוץ (↑↓ דפדוף בתכניות). גם ☰/INFO/GUIDE בשלטים שמעבירים אותם.
  *   ← / →   - בלי פינה: עזרה.
  */
 @OptIn(UnstableApi::class)
@@ -353,7 +353,7 @@ class MainActivity : Activity() {
             "▲ ▼" to "החלפת ערוץ",
             "◀ ▶" to "הזזת הפינה",
             "1 2" to "מעבר ישיר לערוץ",
-            "☰" to "לוח שידורים: מה משודר עכשיו, לפני ואחרי",
+            "OK ארוך" to "לוח שידורים: מה משודר עכשיו, לפני ואחרי",
             "חזור" to "סגירת הפינה",
         )
         val card = LinearLayout(this).apply {
@@ -513,7 +513,7 @@ class MainActivity : Activity() {
         }
         val divider = View(this).apply { setBackgroundColor(Color.argb(60, 255, 255, 255)) }
         val footer = text(13f, Color.argb(160, 255, 255, 255)).apply {
-            this.text = "▲▼ דפדוף  ·  ☰ או חזור לסגירה  ·  לוח שידורים: פישנזון"
+            this.text = "▲▼ דפדוף  ·  חזור או OK לסגירה  ·  לוח שידורים: פישנזון"
             setPadding(0, dp(10), 0, 0)
         }
         return LinearLayout(this).apply {
@@ -743,8 +743,10 @@ class MainActivity : Activity() {
             when (keyCode) {
                 KeyEvent.KEYCODE_DPAD_UP -> { moveGuide(-1); return true }
                 KeyEvent.KEYCODE_DPAD_DOWN -> { moveGuide(+1); return true }
-                KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER,
-                KeyEvent.KEYCODE_NUMPAD_ENTER -> { closeGuide(); return true }
+                KeyEvent.KEYCODE_BACK -> { closeGuide(); return true }
+                // OK סוגר, אבל לא החזרות של הלחיצה הארוכה שפתחה את הלוח
+                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER,
+                KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> { if (event.repeatCount == 0) closeGuide(); return true }
                 KeyEvent.KEYCODE_CHANNEL_UP, KeyEvent.KEYCODE_CHANNEL_DOWN -> {
                     zap(if (keyCode == KeyEvent.KEYCODE_CHANNEL_UP) +1 else -1)
                     guideSel = -1; renderGuide(); touchGuide(); return true
@@ -757,7 +759,8 @@ class MainActivity : Activity() {
             KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_CHANNEL_DOWN -> zap(-1)
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER,
             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
-                if (event.repeatCount == 0) { if (pipOn) swapPip() else openPip() }
+                // לחיצה קצרה = פינה (בעזיבת הכפתור), לחיצה ארוכה = לוח שידורים
+                if (event.repeatCount == 0) event.startTracking()
             }
             KeyEvent.KEYCODE_DPAD_RIGHT -> if (pipOn) moveCorner(+1) else showHelp(8000)
             KeyEvent.KEYCODE_DPAD_LEFT -> if (pipOn) moveCorner(-1) else showHelp(8000)
@@ -776,6 +779,23 @@ class MainActivity : Activity() {
         }
         return true
     }
+
+    override fun onKeyLongPress(keyCode: Int, event: KeyEvent): Boolean {
+        if (isOkKey(keyCode)) { openGuide(); return true }
+        return super.onKeyLongPress(keyCode, event)
+    }
+
+    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
+        if (isOkKey(keyCode)) {
+            // אחרי לחיצה ארוכה האירוע מסומן כמבוטל, ואז לא עושים כלום
+            if (event.isTracking && !event.isCanceled && !guideOpen) { if (pipOn) swapPip() else openPip() }
+            return true
+        }
+        return super.onKeyUp(keyCode, event)
+    }
+
+    private fun isOkKey(k: Int) = k == KeyEvent.KEYCODE_DPAD_CENTER || k == KeyEvent.KEYCODE_ENTER ||
+        k == KeyEvent.KEYCODE_NUMPAD_ENTER || k == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE
 
     // ---------- מחזור חיים ----------
 
