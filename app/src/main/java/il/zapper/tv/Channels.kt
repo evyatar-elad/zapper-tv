@@ -15,7 +15,7 @@ data class Source(
     val host: String? = null,
 )
 
-data class Channel(val number: Int, val name: String, val sources: List<Source>) {
+data class Channel(val number: Int, val name: String, val sources: List<Source>, val epg: String? = null) {
     val label get() = "$number  $name"
 }
 
@@ -32,6 +32,7 @@ object Lineup {
             Channel(
                 number = c.getInt("number"),
                 name = c.getString("name"),
+                epg = c.optString("epg").ifEmpty { null },
                 sources = (0 until src.length()).map { j ->
                     val s = src.getJSONObject(j)
                     Source(

@@ -31,6 +31,12 @@ import androidx.media3.exoplayer.video.VideoRendererEventListener
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import android.content.res.ColorStateList
+import android.widget.ProgressBar
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 import java.util.concurrent.Executors
 
 /**
@@ -43,7 +49,8 @@ import java.util.concurrent.Executors
  *   ← / →   - הזזת הפינה (כשיש פינה).
  *   ספרות   - מעבר ישיר לערוץ (למשל 1 ואז 2 = ערוץ 12).
  *   חזור    - סגירת הפינה; בלי פינה: לחיצה כפולה ליציאה.
- *   תפריט   - עזרה.
+ *   ☰ תפריט - לוח שידורים של הערוץ (↑↓ דפדוף בתכניות).
+ *   ← / →   - בלי פינה: עזרה.
  */
 @OptIn(UnstableApi::class)
 class MainActivity : Activity() {
@@ -65,6 +72,19 @@ class MainActivity : Activity() {
     private lateinit var bannerName: TextView
     private lateinit var bannerStatus: TextView
     private lateinit var helpCard: LinearLayout
+    private lateinit var bannerNow: TextView
+    private lateinit var guideCard: LinearLayout
+    private lateinit var guideBadge: TextView
+    private lateinit var guideTitle: TextView
+    private lateinit var guideClock: TextView
+    private lateinit var guideList: LinearLayout
+    private lateinit var guideDesc: TextView
+    private var guideOpen = false
+    private var guideSel = -1          // אינדקס התכנית המסומנת ברשימת הערוץ
+
+    private val tzIL = TimeZone.getTimeZone("Asia/Jerusalem")
+    private val hhmm = SimpleDateFormat("HH:mm", Locale.US).apply { timeZone = tzIL }
+    private val dayFmt = SimpleDateFormat("EEEE d/M", Locale("iw")).apply { timeZone = tzIL }
 
     private var channels: List<Channel> = emptyList()
     private lateinit var main: Slot
@@ -168,12 +188,23 @@ class MainActivity : Activity() {
             if (fresh != null) ui.post { channels = fresh.also { remapChannels(it) } }
         }
 
+        refreshEpg()
+
         val last = prefs.getInt("last", 12)
         main.play(channels.firstOrNull { it.number == last } ?: channels.first())
         prevChannel = channels.firstOrNull { it.number == prefs.getInt("prev", 11) }
         showChannel(main.channel!!, null, 4000)
         showHelp(10000)
         started = true
+    }
+
+    /** לוח שידורים ברקע (מהעותק השמור, ומהרשת אם עברו 6 שעות). */
+    private fun refreshEpg() {
+        val keys = channels.mapNotNull { it.epg }.toSet()
+        io.execute {
+            Epg.refresh(this, keys)
+            ui.post { if (guideOpen) renderGuide() }
+        }
     }
 
     /** אחרי רשימה חדשה: הערוצים שמתנגנים מקבלים את המקורות המעודכנים (לניסיון הבא). */
@@ -282,10 +313,12 @@ class MainActivity : Activity() {
         }
         bannerName = text(28f, bold = true)
         bannerStatus = text(17f, Color.rgb(253, 211, 77)).apply { visibility = View.GONE }
+        bannerNow = text(17f, Color.argb(225, 255, 255, 255)).apply { visibility = View.GONE }
         val nameCol = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), 0, dp(4), 0)
             addView(bannerName)
+            addView(bannerNow)
             addView(bannerStatus)
         }
         bannerBox = LinearLayout(this).apply {
@@ -299,6 +332,10 @@ class MainActivity : Activity() {
             alpha = 0f
         }
         root.addView(bannerBox, FrameLayout.LayoutParams(-2, -2))
+
+        // ---- לוח שידורים ----
+        guideCard = buildGuide()
+        root.addView(guideCard)
 
         // ---- כרטיס עזרה ----
         helpCard = buildHelpCard()
@@ -316,6 +353,7 @@ class MainActivity : Activity() {
             "▲ ▼" to "החלפת ערוץ",
             "◀ ▶" to "הזזת הפינה",
             "1 2" to "מעבר ישיר לערוץ",
+            "☰" to "לוח שידורים: מה משודר עכשיו, לפני ואחרי",
             "חזור" to "סגירת הפינה",
         )
         val card = LinearLayout(this).apply {
@@ -331,7 +369,7 @@ class MainActivity : Activity() {
         })
         // שתי עמודות של שורות
         val cols = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        rows.chunked(3).forEach { chunk ->
+        rows.chunked(4).forEach { chunk ->
             val col = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(0, 0, 0, 0)
@@ -349,7 +387,7 @@ class MainActivity : Activity() {
         }
         card.addView(cols)
         card.addView(text(14f, Color.argb(180, 255, 255, 255)).apply {
-            this.text = "כפתור התפריט בשלט מציג את העזרה שוב"
+            this.text = "◀ ▶ (כשאין פינה) מציגים את העזרה שוב"
             setPadding(0, dp(10), 0, 0)
         })
         return card
@@ -412,6 +450,9 @@ class MainActivity : Activity() {
         bannerNum.visibility = View.VISIBLE
         bannerNum.text = ch.number.toString()
         bannerName.text = ch.name
+        val p = Epg.now(ch.epg)
+        bannerNow.text = p?.let { "עכשיו: ${it.name}  ·  עד ${hhmm.format(Date(it.end * 1000))}" } ?: ""
+        bannerNow.visibility = if (p == null) View.GONE else View.VISIBLE
         setStatus(status)
         popBanner(ms)
     }
@@ -420,6 +461,7 @@ class MainActivity : Activity() {
     private fun showMessage(big: String, status: String? = null, ms: Long = 2000) {
         bannerNum.visibility = View.GONE
         bannerName.text = big
+        bannerNow.visibility = View.GONE
         setStatus(status)
         popBanner(ms)
     }
@@ -439,6 +481,175 @@ class MainActivity : Activity() {
         fadeIn(helpCard)
         ui.removeCallbacks(hideHelp)
         ui.postDelayed(hideHelp, ms)
+    }
+
+    // ---------- לוח שידורים ----------
+
+    private fun buildGuide(): LinearLayout {
+        guideBadge = text(22f, Color.rgb(20, 20, 20), bold = true).apply {
+            setShadowLayer(0f, 0f, 0f, 0)
+            gravity = Gravity.CENTER
+            minWidth = dp(52)
+            setPadding(dp(10), dp(1), dp(10), dp(1))
+            background = rounded(accent, 9)
+        }
+        guideTitle = text(22f, bold = true).apply { setPadding(dp(12), 0, dp(12), 0) }
+        guideClock = text(15f, Color.argb(190, 255, 255, 255))
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(guideBadge)
+            addView(guideTitle, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(guideClock)
+        }
+        guideList = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(12), 0, dp(8))
+        }
+        guideDesc = text(16f, Color.argb(230, 255, 255, 255)).apply {
+            maxLines = 6
+            setLineSpacing(0f, 1.15f)
+            setPadding(dp(4), dp(10), dp(4), dp(4))
+        }
+        val divider = View(this).apply { setBackgroundColor(Color.argb(60, 255, 255, 255)) }
+        val footer = text(13f, Color.argb(160, 255, 255, 255)).apply {
+            this.text = "▲▼ דפדוף  ·  ☰ או חזור לסגירה  ·  לוח שידורים: פישנזון"
+            setPadding(0, dp(10), 0, 0)
+        }
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(22), dp(18), dp(22), dp(14))
+            background = rounded(glass, 18)
+            addView(header)
+            addView(guideList)
+            addView(divider, LinearLayout.LayoutParams(-1, dp(1)))
+            addView(guideDesc)
+            addView(footer)
+            visibility = View.GONE
+            alpha = 0f
+        }
+    }
+
+    private fun placeGuide() {
+        // בצד שאין בו פינה
+        val left = !pipOn || corner == 0 || corner == 1
+        guideCard.layoutParams = FrameLayout.LayoutParams(
+            resources.displayMetrics.widthPixels * 46 / 100, -2,
+            Gravity.CENTER_VERTICAL or (if (left) Gravity.LEFT else Gravity.RIGHT),
+        ).apply { setMargins(dp(40), dp(28), dp(40), dp(28)) }
+    }
+
+    private val hideGuide = Runnable { closeGuide() }
+
+    private fun openGuide() {
+        guideOpen = true
+        guideSel = -1
+        ui.removeCallbacks(hideHelp); fadeOut(helpCard)
+        ui.removeCallbacks(hideBanner); fadeOut(bannerBox)
+        placeGuide()
+        renderGuide()
+        fadeIn(guideCard)
+        refreshEpg()
+        touchGuide()
+    }
+
+    private fun closeGuide() {
+        guideOpen = false
+        ui.removeCallbacks(hideGuide)
+        fadeOut(guideCard)
+    }
+
+    /** הלוח נסגר לבד אחרי 30 שניות בלי לחיצה */
+    private fun touchGuide() {
+        ui.removeCallbacks(hideGuide)
+        ui.postDelayed(hideGuide, 30000)
+    }
+
+    private fun moveGuide(dir: Int) {
+        val n = Epg.programs(main.channel?.epg).size
+        if (n == 0) return
+        guideSel = (guideSel + dir).coerceIn(0, n - 1)
+        renderGuide()
+        touchGuide()
+    }
+
+    private fun renderGuide() {
+        val ch = main.channel ?: return
+        guideBadge.text = ch.number.toString()
+        guideTitle.text = ch.name
+        val nowMs = System.currentTimeMillis()
+        val now = nowMs / 1000
+        guideClock.text = "${dayFmt.format(Date(nowMs))}  ·  ${hhmm.format(Date(nowMs))}"
+        guideList.removeAllViews()
+
+        val progs = Epg.programs(ch.epg)
+        if (progs.isEmpty()) {
+            guideList.addView(text(17f, Color.argb(200, 255, 255, 255)).apply {
+                this.text = if (ch.epg == null) "אין לוח שידורים לערוץ הזה" else "לוח השידורים נטען..."
+            })
+            guideDesc.text = ""
+            return
+        }
+        val nowIdx = progs.indexOfFirst { it.isNow(now) }.let { if (it >= 0) it else progs.indexOfFirst { p -> p.start > now }.coerceAtLeast(0) }
+        if (guideSel !in progs.indices) guideSel = nowIdx
+        // חלון: תכנית אחת לפני המסומנת ו-5 אחריה
+        val from = (guideSel - 1).coerceAtLeast(0)
+        val to = (from + 6).coerceAtMost(progs.size)
+        var lastDay = ""
+        for (i in from until to) {
+            val p = progs[i]
+            val day = dayFmt.format(Date(p.start * 1000))
+            if (day != dayFmt.format(Date(nowMs)) && day != lastDay) {
+                guideList.addView(text(14f, accent, bold = true).apply { this.text = day; setPadding(dp(4), dp(6), 0, dp(2)) })
+            }
+            lastDay = day
+            guideList.addView(programRow(p, now, i == guideSel))
+        }
+        val sel = progs[guideSel]
+        val range = "${dayFmt.format(Date(sel.start * 1000))}  ${hhmm.format(Date(sel.start * 1000))}-${hhmm.format(Date(sel.end * 1000))}"
+        guideDesc.text = if (sel.desc.isEmpty()) range else "$range\n${sel.desc}"
+    }
+
+    private fun programRow(p: Prog, now: Long, selected: Boolean): View {
+        val live = p.isNow(now)
+        val past = p.end <= now
+        val time = text(17f, if (live) accent else Color.WHITE, bold = true).apply {
+            this.text = hhmm.format(Date(p.start * 1000))
+            minWidth = dp(64)
+        }
+        val name = text(18f, if (live) accent else Color.WHITE, bold = live).apply {
+            this.text = p.name
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }
+        val line = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(time)
+            addView(name, LinearLayout.LayoutParams(0, -2, 1f))
+            if (live) addView(text(13f, Color.rgb(20, 20, 20), bold = true).apply {
+                this.text = "עכשיו"
+                setShadowLayer(0f, 0f, 0f, 0)
+                setPadding(dp(8), dp(1), dp(8), dp(1))
+                background = rounded(accent, 6)
+            })
+        }
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(10), dp(7), dp(10), dp(7))
+            if (selected) background = rounded(Color.argb(55, 255, 255, 255), 10)
+            if (past) alpha = 0.5f
+            addView(line)
+            if (live) {
+                val bar = ProgressBar(this@MainActivity, null, android.R.attr.progressBarStyleHorizontal).apply {
+                    max = 1000
+                    progress = ((now - p.start) * 1000 / (p.end - p.start)).toInt()
+                    progressTintList = ColorStateList.valueOf(accent)
+                    progressBackgroundTintList = ColorStateList.valueOf(Color.argb(70, 255, 255, 255))
+                }
+                addView(bar, LinearLayout.LayoutParams(-1, dp(4)).apply { topMargin = dp(6) })
+            }
+        }
     }
 
     // ---------- פעולות ----------
@@ -526,6 +737,21 @@ class MainActivity : Activity() {
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        val guideKey = keyCode == KeyEvent.KEYCODE_MENU || keyCode == KeyEvent.KEYCODE_INFO ||
+            keyCode == KeyEvent.KEYCODE_GUIDE
+        if (guideOpen) {
+            when (keyCode) {
+                KeyEvent.KEYCODE_DPAD_UP -> { moveGuide(-1); return true }
+                KeyEvent.KEYCODE_DPAD_DOWN -> { moveGuide(+1); return true }
+                KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER,
+                KeyEvent.KEYCODE_NUMPAD_ENTER -> { closeGuide(); return true }
+                KeyEvent.KEYCODE_CHANNEL_UP, KeyEvent.KEYCODE_CHANNEL_DOWN -> {
+                    zap(if (keyCode == KeyEvent.KEYCODE_CHANNEL_UP) +1 else -1)
+                    guideSel = -1; renderGuide(); touchGuide(); return true
+                }
+                else -> if (guideKey) { closeGuide(); return true } else closeGuide()
+            }
+        }
         when (keyCode) {
             KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_CHANNEL_UP -> zap(+1)
             KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_CHANNEL_DOWN -> zap(-1)
@@ -535,7 +761,7 @@ class MainActivity : Activity() {
             }
             KeyEvent.KEYCODE_DPAD_RIGHT -> if (pipOn) moveCorner(+1) else showHelp(8000)
             KeyEvent.KEYCODE_DPAD_LEFT -> if (pipOn) moveCorner(-1) else showHelp(8000)
-            KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_INFO, KeyEvent.KEYCODE_GUIDE -> showHelp(12000)
+            KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_INFO, KeyEvent.KEYCODE_GUIDE -> openGuide()
             in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9 -> typeDigit(keyCode - KeyEvent.KEYCODE_0)
             KeyEvent.KEYCODE_BACK -> {
                 if (helpCard.visibility == View.VISIBLE) { ui.removeCallbacks(hideHelp); fadeOut(helpCard) }
@@ -556,6 +782,7 @@ class MainActivity : Activity() {
     override fun onStart() {
         super.onStart()
         if (!started) return
+        refreshEpg()
         // חזרה לאפליקציה: טעינה מחדש של מה שהיה (בשידור חי - לנקודה החיה)
         if (main.channel != null && main.player.playbackState == Player.STATE_IDLE) main.play(main.channel!!)
         if (pipOn && pip.channel != null && pip.player.playbackState == Player.STATE_IDLE) pip.play(pip.channel!!)

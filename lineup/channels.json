@@ -1,10 +1,11 @@
 {
   "version": 1,
-  "updated": "2026-11-13",
+  "updated": "2026-11-14",
   "channels": [
     {
       "number": 11,
       "name": "כאן 11",
+      "epg": "11",
       "sources": [
         {
           "type": "hls",
@@ -15,6 +16,7 @@
     {
       "number": 12,
       "name": "קשת 12",
+      "epg": "12",
       "sources": [
         {
           "type": "keshet",
@@ -29,6 +31,7 @@
     {
       "number": 13,
       "name": "רשת 13",
+      "epg": "13",
       "sources": [
         {
           "type": "hls",
@@ -50,6 +53,7 @@
     {
       "number": 14,
       "name": "עכשיו 14",
+      "epg": "14",
       "sources": [
         {
           "type": "hls",
@@ -64,6 +68,7 @@
     {
       "number": 15,
       "name": "i24NEWS",
+      "epg": "i24news",
       "sources": [
         {
           "type": "hls",
@@ -74,6 +79,7 @@
     {
       "number": 16,
       "name": "ערוץ 16",
+      "epg": "16tv",
       "sources": [
         {
           "type": "hls",
@@ -84,6 +90,7 @@
     {
       "number": 99,
       "name": "כנסת 99",
+      "epg": "99",
       "sources": [
         {
           "type": "hls",
