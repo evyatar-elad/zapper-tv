@@ -101,9 +101,15 @@ class MainActivity : Activity() {
     private lateinit var tsFrom: TextView
     private lateinit var tsTo: TextView
     private lateinit var tsLive: TextView
-    private lateinit var tsPill: TextView
     private var tsOn = false              // המסך הגדול לא בשידור חי (הקלטה)
     private var longSkipAt = 0L           // זמן הדילוג הארוך האחרון (החזקת ◀▶)
+    private lateinit var allCard: LinearLayout
+    private lateinit var allWhen: TextView
+    private lateinit var allRows: LinearLayout
+    private lateinit var allDesc: TextView
+    private var allOpen = false
+    private var allSel = 0
+    private var allTime = 0L               // השעה שהלוח מציג (ms); ◀▶ = חצי שעה
     private var guideOpen = false
     private var guideSel = -1          // אינדקס התכנית המסומנת ברשימת הערוץ
 
@@ -406,20 +412,17 @@ class MainActivity : Activity() {
         guideCard = buildGuide()
         root.addView(guideCard)
 
-        // ---- מצב מאחור: פס תחתון + תווית קבועה למעלה ----
+        // ---- הקלטה: פס תחתון שמופיע בדילוג/השהיה ונעלם ----
         tsPanel = buildTsPanel()
         root.addView(tsPanel, FrameLayout.LayoutParams(
             resources.displayMetrics.widthPixels * 60 / 100, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL,
         ).apply { setMargins(dp(40), 0, dp(40), dp(36)) })
-        tsPill = text(16f, Color.rgb(20, 20, 20), bold = true).apply {
-            setShadowLayer(0f, 0f, 0f, 0)
-            setPadding(dp(14), dp(4), dp(14), dp(4))
-            background = rounded(accent, 14)
-            visibility = View.GONE
-        }
-        root.addView(tsPill, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply {
-            setMargins(0, dp(24), 0, 0)
-        })
+
+        // ---- כל הלוחות ----
+        allCard = buildAll()
+        root.addView(allCard, FrameLayout.LayoutParams(
+            resources.displayMetrics.widthPixels * 84 / 100, -2, Gravity.CENTER,
+        ))
 
         // ---- כרטיס עזרה ----
         helpCard = buildHelpCard()
@@ -435,6 +438,8 @@ class MainActivity : Activity() {
             "OK" to "פרסומות? הערוץ עובר לפינה, ואתם לערוץ הקודם",
             "OK" to "נגמרו? החלפה: הערוץ שבפינה חוזר לגדול",
             "▲ ▼" to "החלפת ערוץ",
+            "▼ ארוך" to "השהיה (OK ממשיך)",
+            "▲ ארוך" to "לוחות השידורים של כל הערוצים",
             "◀ ▶" to "הזזת הפינה · בהקלטה: 30 שנ' (ארוך = 5 דק')",
             "1 2" to "מעבר ישיר לערוץ",
             "OK ארוך" to "לוח שידורים · OK על תכנית = מההתחלה",
@@ -453,7 +458,7 @@ class MainActivity : Activity() {
         })
         // שתי עמודות של שורות
         val cols = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        rows.chunked(4).forEach { chunk ->
+        rows.chunked(5).forEach { chunk ->
             val col = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(0, 0, 0, 0)
@@ -673,7 +678,7 @@ class MainActivity : Activity() {
             d == null -> "בודק אם יש הקלטה..."
             !hasRec(d) -> "בערוץ הזה אין הקלטה (נשמרות רק ${fmtDur(d.durMs)})"
             else -> "⏪ נשמרות ${fmtDur(d.durMs)} אחורה · מסומן ⏮ = אפשר מההתחלה"
-        }
+        } + (if (ch.sources.size > 1) "  ·  כתובת ${main.sourceIdx + 1} מתוך ${ch.sources.size}" else "")
         val watchWall = if (tsOn) playbackWall(main) else null
 
         val progs = Epg.programs(ch.epg)
@@ -753,6 +758,152 @@ class MainActivity : Activity() {
         layoutParams = LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(6) }
     }
 
+    // ---------- כל הלוחות: כל הערוצים בשעה אחת ----------
+
+    private fun buildAll(): LinearLayout {
+        allWhen = text(17f, accent, bold = true)
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(text(22f, bold = true).apply { this.text = "כל הערוצים" }, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(allWhen)
+        }
+        allRows = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(10), 0, dp(6))
+        }
+        allDesc = text(15f, Color.argb(225, 255, 255, 255)).apply {
+            maxLines = 3
+            setPadding(dp(4), dp(8), dp(4), 0)
+        }
+        val footer = text(13f, Color.argb(160, 255, 255, 255)).apply {
+            this.text = "▲▼ ערוץ  ·  ◀▶ חצי שעה אחורה/קדימה  ·  OK מעבר לערוץ  ·  חזור לסגירה  ·  לוח: פישנזון"
+            setPadding(0, dp(10), 0, 0)
+        }
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(16), dp(24), dp(14))
+            background = rounded(glass, 18)
+            addView(header)
+            addView(allRows)
+            addView(View(this@MainActivity).apply { setBackgroundColor(Color.argb(60, 255, 255, 255)) }, LinearLayout.LayoutParams(-1, dp(1)))
+            addView(allDesc)
+            addView(footer)
+            visibility = View.GONE
+            alpha = 0f
+        }
+    }
+
+    private val hideAll = Runnable { closeAll() }
+
+    private fun openAll() {
+        if (guideOpen) closeGuide()
+        ui.removeCallbacks(hideHelp); fadeOut(helpCard)
+        ui.removeCallbacks(hideBanner); fadeOut(bannerBox)
+        allOpen = true
+        allTime = System.currentTimeMillis()
+        allSel = channels.indexOfFirst { it.number == main.channel?.number }.coerceAtLeast(0)
+        renderAll()
+        fadeIn(allCard)
+        refreshEpg()
+        touchAll()
+    }
+
+    private fun closeAll() {
+        allOpen = false
+        ui.removeCallbacks(hideAll)
+        fadeOut(allCard)
+    }
+
+    private fun touchAll() {
+        ui.removeCallbacks(hideAll)
+        ui.postDelayed(hideAll, 45000)
+    }
+
+    private fun moveAll(dir: Int) {
+        if (channels.isEmpty()) return
+        allSel = (allSel + dir + channels.size) % channels.size
+        renderAll(); touchAll()
+    }
+
+    /** ◀▶ = חצי שעה; לא לפני 6 שעות אחורה. */
+    private fun shiftAll(dir: Int) {
+        val now = System.currentTimeMillis()
+        allTime = (allTime + dir * 30 * 60_000L).coerceIn(now - 6 * 3600_000L, now + 5 * 24 * 3600_000L)
+        if (kotlin.math.abs(allTime - now) < 60_000) allTime = now
+        renderAll(); touchAll()
+    }
+
+    private fun allOk() {
+        val ch = channels.getOrNull(allSel) ?: return
+        closeAll()
+        if (ch.number != main.channel?.number || tsOn) setMain(ch)
+    }
+
+    private fun renderAll() {
+        val now = System.currentTimeMillis()
+        val atNow = kotlin.math.abs(allTime - now) < 60_000
+        allWhen.text = if (atNow) "עכשיו · ${hhmm.format(Date(now))}" else "${dayFmt.format(Date(allTime))}  ${hhmm.format(Date(allTime))}"
+        allRows.removeAllViews()
+        val t = allTime / 1000
+        var selProg: Prog? = null
+        channels.forEachIndexed { i, ch ->
+            val progs = Epg.programs(ch.epg)
+            val cur = progs.firstOrNull { t in it.start until it.end }
+            val next = progs.firstOrNull { it.start >= (cur?.end ?: t) }
+            if (i == allSel) selProg = cur ?: next
+            allRows.addView(allRow(ch, cur, next, t, i == allSel, atNow))
+        }
+        val sp = selProg
+        allDesc.text = when {
+            sp == null -> ""
+            sp.desc.isEmpty() -> "${sp.name}  ${hhmm.format(Date(sp.start * 1000))}-${hhmm.format(Date(sp.end * 1000))}"
+            else -> "${sp.name}  ${hhmm.format(Date(sp.start * 1000))}-${hhmm.format(Date(sp.end * 1000))}  ·  ${sp.desc}"
+        }
+    }
+
+    private fun allRow(ch: Channel, cur: Prog?, next: Prog?, t: Long, selected: Boolean, atNow: Boolean): View {
+        val badge = text(17f, Color.rgb(20, 20, 20), bold = true).apply {
+            this.text = ch.number.toString()
+            setShadowLayer(0f, 0f, 0f, 0)
+            gravity = Gravity.CENTER
+            minWidth = dp(44)
+            setPadding(dp(6), 0, dp(6), 0)
+            background = rounded(if (ch.number == main.channel?.number) accent else Color.argb(220, 255, 255, 255), 7)
+        }
+        val name = text(16f, Color.argb(220, 255, 255, 255)).apply {
+            this.text = ch.name
+            maxLines = 1
+            setPadding(dp(10), 0, dp(8), 0)
+        }
+        fun progCol(p: Prog?, live: Boolean, dim: Boolean) = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(8), 0, dp(8), 0)
+            addView(text(17f, if (live) accent else Color.WHITE, bold = live).apply {
+                this.text = p?.let { "${hhmm.format(Date(it.start * 1000))}  ${it.name}" } ?: "—"
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                if (dim) alpha = 0.7f
+            })
+            if (live && p != null) addView(ProgressBar(this@MainActivity, null, android.R.attr.progressBarStyleHorizontal).apply {
+                max = 1000
+                progress = ((t - p.start) * 1000 / (p.end - p.start)).toInt().coerceIn(0, 1000)
+                progressTintList = ColorStateList.valueOf(accent)
+                progressBackgroundTintList = ColorStateList.valueOf(Color.argb(60, 255, 255, 255))
+            }, LinearLayout.LayoutParams(-1, dp(3)).apply { topMargin = dp(4) })
+        }
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(8), dp(7), dp(8), dp(7))
+            if (selected) background = rounded(Color.argb(55, 255, 255, 255), 10)
+            addView(badge)
+            addView(name, LinearLayout.LayoutParams(dp(150), -2))
+            addView(progCol(cur, atNow, false), LinearLayout.LayoutParams(0, -2, 1.3f))
+            addView(progCol(next, false, true), LinearLayout.LayoutParams(0, -2, 1f))
+        }
+    }
+
     // ---------- הקלטה: חלון השידור השמור בזרם (DVR) ----------
 
     /** החלון השמור: שעת ההתחלה שלו (מ-EXT-X-PROGRAM-DATE-TIME), אורך, ומיקום השידור החי. */
@@ -796,8 +947,8 @@ class MainActivity : Activity() {
             !canRestart(p, d) -> showMessage("ההתחלה כבר לא שמורה", "נשמרות ${fmtDur(d.durMs)} אחורה", 3000)
             else -> {
                 closeGuide()
-                // 30 שניות לפני הזמן בלוח (התכניות מתחילות קצת אחרי), אם זה עדיין בחלון
-                val target = maxOf(p.start * 1000 - 30_000, d.startWall + EDGE_MS)
+                // בדיוק בזמן שבלוח (בקשת המשתמש; פערים בלוח עצמו לא בשליטתנו)
+                val target = maxOf(p.start * 1000, d.startWall + EDGE_MS)
                 seekMainWall(target, d)
             }
         }
@@ -822,7 +973,6 @@ class MainActivity : Activity() {
         ui.removeCallbacks(tsTick)
         ui.removeCallbacks(hideTsPanel)
         tsPanel.visibility = View.GONE
-        tsPill.visibility = View.GONE
     }
 
     private fun goLive() {
@@ -849,11 +999,20 @@ class MainActivity : Activity() {
         showTsPanel(4000)
     }
 
+    /** השהיה/המשך, גם בשידור חי: השהיה בחי = מעבר להקלטה (צריך חלון שמור בזרם). */
     private fun togglePause() {
         val pl = main.player
-        pl.playWhenReady = !pl.playWhenReady
+        if (pl.playWhenReady) {
+            if (dvrWindow(pl) == null) { showMessage("אי אפשר להשהות בערוץ הזה", "אין בו הקלטה", 2500); return }
+            pl.playWhenReady = false
+            enterTs()
+        } else {
+            pl.playWhenReady = true
+        }
         showTsPanel(4000)
     }
+
+    private fun isPaused() = tsOn && !main.player.playWhenReady
 
     private val hideTsPanel = Runnable {
         if (!main.player.playWhenReady) return@Runnable   // מושהה: הפס נשאר
@@ -935,10 +1094,8 @@ class MainActivity : Activity() {
         val liveWall = d.startWall + d.livePos
         val behindMin = ((d.livePos - pos).coerceAtLeast(0) + 30_000) / 60_000
         val paused = !main.player.playWhenReady
-        val head = (if (paused) "⏸ מושהה · " else "⏪ ") + "מאחור $behindMin דק'"
-        tsBehind.text = head
-        tsPill.text = head + "  ·  חזור = חי"
-        tsPill.visibility = if (tsPanel.visibility == View.VISIBLE && tsPanel.alpha > 0.5f) View.GONE else View.VISIBLE
+        val lag = if (behindMin < 1) "פחות מדקה" else "$behindMin דק'"
+        tsBehind.text = if (paused) "⏸ מושהה · $lag אחרי החי" else "⏪ הקלטה · $lag אחרי החי"
 
         val prog = Epg.programs(ch.epg).firstOrNull { wall / 1000 in it.start until it.end }
         tsProg.text = prog?.name ?: ch.name
@@ -951,6 +1108,7 @@ class MainActivity : Activity() {
         tsTo.text = if (prog != null) hhmm.format(Date(to)) else "חי"
         val nowProg = Epg.now(ch.epg)
         tsLive.text = (nowProg?.let { "בשידור החי: ${it.name}  ·  " } ?: "") +
+            (if (paused) "OK = המשך  ·  " else "") +
             (if (pipOn) "חזור = לשידור החי" else "◀▶ 30 שנ' (ארוך 5 דק')  ·  חזור = לשידור החי")
     }
 
@@ -1053,14 +1211,27 @@ class MainActivity : Activity() {
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         val guideKey = keyCode == KeyEvent.KEYCODE_MENU || keyCode == KeyEvent.KEYCODE_INFO ||
             keyCode == KeyEvent.KEYCODE_GUIDE
+        if (allOpen) {
+            // החזרות של הלחיצה הארוכה על ▲ שפתחה את הלוח לא מזיזות
+            if (event.repeatCount > 0) return true
+            when (keyCode) {
+                KeyEvent.KEYCODE_DPAD_UP -> { moveAll(-1); return true }
+                KeyEvent.KEYCODE_DPAD_DOWN -> { moveAll(+1); return true }
+                KeyEvent.KEYCODE_DPAD_RIGHT -> { shiftAll(+1); return true }
+                KeyEvent.KEYCODE_DPAD_LEFT -> { shiftAll(-1); return true }
+                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> { allOk(); return true }
+                KeyEvent.KEYCODE_BACK -> { closeAll(); return true }
+                else -> closeAll()
+            }
+        }
         if (guideOpen) {
             when (keyCode) {
                 KeyEvent.KEYCODE_DPAD_UP -> { moveGuide(-1); return true }
                 KeyEvent.KEYCODE_DPAD_DOWN -> { moveGuide(+1); return true }
                 KeyEvent.KEYCODE_BACK -> { closeGuide(); return true }
                 // OK סוגר, אבל לא החזרות של הלחיצה הארוכה שפתחה את הלוח
-                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER,
-                KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> { if (event.repeatCount == 0) guideOk(); return true }
+                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER ->
+                    { if (event.repeatCount == 0) guideOk(); return true }
                 KeyEvent.KEYCODE_CHANNEL_UP, KeyEvent.KEYCODE_CHANNEL_DOWN -> {
                     zap(if (keyCode == KeyEvent.KEYCODE_CHANNEL_UP) +1 else -1)
                     guideSel = -1; renderGuide(); touchGuide(); return true
@@ -1068,12 +1239,14 @@ class MainActivity : Activity() {
                 else -> if (guideKey) { closeGuide(); return true } else closeGuide()
             }
         }
-        // מצב מאחור: השהיה/המשך, ודילוגים ב-◀▶ כשאין פינה
+        // כפתורי השהיה בשלטים שיש בהם (גם בשידור חי)
+        if (keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE || keyCode == KeyEvent.KEYCODE_MEDIA_PLAY ||
+            keyCode == KeyEvent.KEYCODE_MEDIA_PAUSE) {
+            if (event.repeatCount == 0) togglePause(); return true
+        }
+        // הקלטה: דילוגים ב-◀▶ כשאין פינה
         if (tsOn) {
             when (keyCode) {
-                KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_MEDIA_PLAY, KeyEvent.KEYCODE_MEDIA_PAUSE -> {
-                    if (event.repeatCount == 0) togglePause(); return true
-                }
                 KeyEvent.KEYCODE_MEDIA_REWIND -> { skip(-SKIP_MS); return true }
                 KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> { skip(SKIP_MS); return true }
                 KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> if (!pipOn) {
@@ -1089,10 +1262,11 @@ class MainActivity : Activity() {
             }
         }
         when (keyCode) {
-            KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_CHANNEL_UP -> zap(+1)
-            KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_CHANNEL_DOWN -> zap(-1)
-            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER,
-            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
+            KeyEvent.KEYCODE_CHANNEL_UP -> zap(+1)
+            KeyEvent.KEYCODE_CHANNEL_DOWN -> zap(-1)
+            // ▲▼ קצר = ערוץ (בעזיבה); ▲ ארוך = כל הלוחות; ▼ ארוך = השהיה
+            KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> if (event.repeatCount == 0) event.startTracking()
+            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> {
                 // לחיצה קצרה = פינה (בעזיבת הכפתור), לחיצה ארוכה = לוח שידורים
                 if (event.repeatCount == 0) event.startTracking()
             }
@@ -1117,6 +1291,8 @@ class MainActivity : Activity() {
 
     override fun onKeyLongPress(keyCode: Int, event: KeyEvent): Boolean {
         if (isOkKey(keyCode)) { openGuide(); return true }
+        if (keyCode == KeyEvent.KEYCODE_DPAD_UP) { openAll(); return true }
+        if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN) { togglePause(); return true }
         if (tsOn && !pipOn && (keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT)) {
             longSkipAt = event.eventTime
             skip((if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) 1 else -1) * LONG_SKIP_MS)
@@ -1126,6 +1302,12 @@ class MainActivity : Activity() {
     }
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_DPAD_UP || keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
+            if (event.isTracking && !event.isCanceled && !guideOpen && !allOpen) {
+                zap(if (keyCode == KeyEvent.KEYCODE_DPAD_UP) +1 else -1)
+            }
+            return true
+        }
         if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
             // לחיצה קצרה במצב מאחור = 30 שניות (אחרי לחיצה ארוכה האירוע מבוטל)
             if (tsOn && !pipOn && event.isTracking && !event.isCanceled) {
@@ -1136,14 +1318,17 @@ class MainActivity : Activity() {
         }
         if (isOkKey(keyCode)) {
             // אחרי לחיצה ארוכה האירוע מסומן כמבוטל, ואז לא עושים כלום
-            if (event.isTracking && !event.isCanceled && !guideOpen) { if (pipOn) swapPip() else openPip() }
+            if (event.isTracking && !event.isCanceled && !guideOpen && !allOpen) {
+                // מושהה: OK = המשך. אחרת: פינה / החלפה כמו תמיד
+                if (isPaused()) togglePause() else if (pipOn) swapPip() else openPip()
+            }
             return true
         }
         return super.onKeyUp(keyCode, event)
     }
 
     private fun isOkKey(k: Int) = k == KeyEvent.KEYCODE_DPAD_CENTER || k == KeyEvent.KEYCODE_ENTER ||
-        k == KeyEvent.KEYCODE_NUMPAD_ENTER || k == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE
+        k == KeyEvent.KEYCODE_NUMPAD_ENTER
 
     // ---------- מחזור חיים ----------
 
