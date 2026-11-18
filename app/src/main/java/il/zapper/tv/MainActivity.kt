@@ -158,6 +158,10 @@ class MainActivity : Activity() {
             val d = dvrWindow(player) ?: return
             pendingWallMs = null
             player.seekTo((target - d.startWall).coerceIn(EDGE_MS, d.livePos))
+            if (this === main && tsOn) {
+                if (target < d.startWall + EDGE_MS) showMessage("ההתחלה כבר לא שמורה", "מתחילים מהמוקדם ביותר שנשמר", 3000)
+                showTsPanel(5000)
+            }
         }
 
         fun tryCurrent() {
@@ -317,7 +321,9 @@ class MainActivity : Activity() {
             }
 
             override fun onTimelineChanged(timeline: Timeline, reason: Int) {
-                (if (main.player === p) main else pip).applyPending()
+                val slot = if (main.player === p) main else pip
+                rememberDvr(slot)
+                slot.applyPending()
             }
 
             override fun onPlaybackStateChanged(state: Int) {
@@ -777,7 +783,7 @@ class MainActivity : Activity() {
             setPadding(dp(4), dp(8), dp(4), 0)
         }
         val footer = text(13f, Color.argb(160, 255, 255, 255)).apply {
-            this.text = "▲▼ ערוץ  ·  ▶ חצי שעה אחורה · ◀ קדימה  ·  OK מעבר לערוץ  ·  חזור לסגירה  ·  לוח: פישנזון"
+            this.text = "▲▼ ערוץ  ·  ▶ חצי שעה אחורה · ◀ קדימה  ·  ⏮ = מוקלט, OK מההתחלה  ·  חזור לסגירה"
             setPadding(0, dp(10), 0, 0)
         }
         return LinearLayout(this).apply {
@@ -834,10 +840,60 @@ class MainActivity : Activity() {
         renderAll(); touchAll()
     }
 
+    /** OK בכל הלוחות: בשעה "עכשיו" או בתכנית עתידית = הערוץ בשידור חי; בתכנית שעברה = מההתחלה אם שמורה. */
     private fun allOk() {
         val ch = channels.getOrNull(allSel) ?: return
+        val now = System.currentTimeMillis()
+        val atNow = kotlin.math.abs(allTime - now) < 60_000
+        val p = Epg.programs(ch.epg).firstOrNull { allTime / 1000 in it.start until it.end }
+        if (atNow || p == null || p.start * 1000 > now) {
+            closeAll()
+            if (ch.number != main.channel?.number || tsOn) setMain(ch)
+            return
+        }
+        if (!restartable(ch, p)) {
+            val dur = knownDvr(ch)
+            showMessage("התכנית כבר לא שמורה",
+                if (dur == null) "עוד לא ידוע כמה נשמר בערוץ הזה" else if (dur < MIN_DVR_MS) "בערוץ הזה אין הקלטה" else "נשמרות ${fmtDur(dur)} אחורה", 3000)
+            return
+        }
         closeAll()
-        if (ch.number != main.channel?.number || tsOn) setMain(ch)
+        playFromStart(ch, p)
+    }
+
+    /** תכנית מוקלטת בערוץ כלשהו: בערוץ שבמסך - קפיצה; בערוץ אחר - טעינה ואז קפיצה. */
+    private fun playFromStart(ch: Channel, p: Prog) {
+        val d = dvrWindow(main.player)
+        if (ch.number == main.channel?.number && d != null) {
+            seekMainWall(maxOf(p.start * 1000, d.startWall + EDGE_MS), d)
+            return
+        }
+        setMain(ch)
+        main.pendingWallMs = p.start * 1000
+        enterTs()
+    }
+
+    // אורך החלון השמור לכל ערוץ: נמדד בכל פעם שהערוץ מתנגן (גם בפינה) ונשמר.
+    // עד המדידה הראשונה: ערכים ידועים (בדיקת המשתמש). קשת/16/כנסת - רק אחרי מדידה.
+    private val dvrDefaults = mapOf(11 to 6 * 3600_000L, 13 to 2 * 3600_000L, 14 to 6 * 3600_000L, 15 to 3 * 3600_000L)
+
+    private fun rememberDvr(slot: Slot) {
+        val n = slot.channel?.number ?: return
+        val d = dvrWindow(slot.player) ?: return
+        if (kotlin.math.abs(prefs.getLong("dvr_$n", -1) - d.durMs) > 60_000) prefs.edit().putLong("dvr_$n", d.durMs).apply()
+    }
+
+    private fun knownDvr(ch: Channel): Long? =
+        prefs.getLong("dvr_${ch.number}", -1).takeIf { it >= 0 } ?: dvrDefaults[ch.number]
+
+    /** האם אפשר לראות את התכנית מההתחלה. בערוץ שבמסך - לפי החלון האמיתי; באחרים - לפי האורך הידוע. */
+    private fun restartable(ch: Channel, p: Prog): Boolean {
+        if (ch.number == main.channel?.number) dvrWindow(main.player)?.let { return canRestart(p, it) }
+        val dur = knownDvr(ch) ?: return false
+        if (dur < MIN_DVR_MS) return false
+        val now = System.currentTimeMillis()
+        val start = p.start * 1000
+        return start < now && start >= now - dur + 2 * 60_000   // 2 דק' מרווח ביטחון
     }
 
     private fun renderAll() {
@@ -847,22 +903,26 @@ class MainActivity : Activity() {
         allRows.removeAllViews()
         val t = allTime / 1000
         var selProg: Prog? = null
+        var selRec = false
         channels.forEachIndexed { i, ch ->
             val progs = Epg.programs(ch.epg)
             val cur = progs.firstOrNull { t in it.start until it.end }
             val next = progs.firstOrNull { it.start >= (cur?.end ?: t) }
-            if (i == allSel) selProg = cur ?: next
-            allRows.addView(allRow(ch, cur, next, t, i == allSel, atNow))
+            val rec = cur != null && restartable(ch, cur)
+            if (i == allSel) { selProg = cur ?: next; selRec = rec && !atNow }
+            allRows.addView(allRow(ch, cur, next, t, i == allSel, atNow, rec))
         }
         val sp = selProg
-        allDesc.text = when {
-            sp == null -> ""
-            sp.desc.isEmpty() -> "${sp.name}  ${hhmm.format(Date(sp.start * 1000))}-${hhmm.format(Date(sp.end * 1000))}"
-            else -> "${sp.name}  ${hhmm.format(Date(sp.start * 1000))}-${hhmm.format(Date(sp.end * 1000))}  ·  ${sp.desc}"
+        val head = sp?.let { "${it.name}  ${hhmm.format(Date(it.start * 1000))}-${hhmm.format(Date(it.end * 1000))}" } ?: ""
+        val hint = when {
+            selRec -> "OK = צפייה מההתחלה"
+            atNow -> "OK = מעבר לערוץ  ·  ▶ אחורה לתכניות מוקלטות (⏮)"
+            else -> ""
         }
+        allDesc.text = listOf(head, hint, sp?.desc ?: "").filter { it.isNotEmpty() }.joinToString("  ·  ")
     }
 
-    private fun allRow(ch: Channel, cur: Prog?, next: Prog?, t: Long, selected: Boolean, atNow: Boolean): View {
+    private fun allRow(ch: Channel, cur: Prog?, next: Prog?, t: Long, selected: Boolean, atNow: Boolean, rec: Boolean): View {
         val badge = text(17f, Color.rgb(20, 20, 20), bold = true).apply {
             this.text = ch.number.toString()
             setShadowLayer(0f, 0f, 0f, 0)
@@ -876,11 +936,11 @@ class MainActivity : Activity() {
             maxLines = 1
             setPadding(dp(10), 0, dp(8), 0)
         }
-        fun progCol(p: Prog?, live: Boolean, dim: Boolean) = LinearLayout(this).apply {
+        fun progCol(p: Prog?, live: Boolean, dim: Boolean, mark: Boolean = false) = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(8), 0, dp(8), 0)
             addView(text(17f, if (live) accent else Color.WHITE, bold = live).apply {
-                this.text = p?.let { "${hhmm.format(Date(it.start * 1000))}  ${it.name}" } ?: "—"
+                this.text = p?.let { (if (mark) "⏮ " else "") + "${hhmm.format(Date(it.start * 1000))}  ${it.name}" } ?: "—"
                 maxLines = 1
                 ellipsize = android.text.TextUtils.TruncateAt.END
                 if (dim) alpha = 0.7f
@@ -899,7 +959,7 @@ class MainActivity : Activity() {
             if (selected) background = rounded(Color.argb(55, 255, 255, 255), 10)
             addView(badge)
             addView(name, LinearLayout.LayoutParams(dp(150), -2))
-            addView(progCol(cur, atNow, false), LinearLayout.LayoutParams(0, -2, 1.3f))
+            addView(progCol(cur, atNow, false, rec), LinearLayout.LayoutParams(0, -2, 1.3f))
             addView(progCol(next, false, true), LinearLayout.LayoutParams(0, -2, 1f))
         }
     }
