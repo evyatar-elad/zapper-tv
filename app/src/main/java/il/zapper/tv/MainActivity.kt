@@ -56,7 +56,7 @@ import java.util.concurrent.Executors
  *
  * הקלטה (מצב "מאחור"): בלוח השידורים OK על תכנית שעדיין בחלון השמור של הזרם = צפייה מההתחלה.
  *   ◀ / ▶   - 30 שניות אחורה/קדימה (ארוך = 5 דקות), רק כשאין פינה.
- *   PLAY/PAUSE - השהיה/המשך.  חזור - לשידור החי.  ↑↓ - ערוץ אחר בשידור חי.
+ *   OK או PLAY/PAUSE - השהיה/המשך.  חזור - לשידור החי (ומשם OK = פינה).  ↑↓ - ערוץ אחר בשידור חי.
  *   הפינה תמיד בשידור חי: ערוץ שעובר אליה קופץ לשידור החי.
  */
 @OptIn(UnstableApi::class)
@@ -444,7 +444,7 @@ class MainActivity : Activity() {
             "OK" to "פרסומות? הערוץ עובר לפינה, ואתם לערוץ הקודם",
             "OK" to "נגמרו? החלפה: הערוץ שבפינה חוזר לגדול",
             "▲ ▼" to "החלפת ערוץ",
-            "▼ ארוך" to "השהיה (OK ממשיך)",
+            "▼ ארוך" to "השהיה · בהקלטה גם OK",
             "▲ ארוך" to "לוחות השידורים של כל הערוצים",
             "◀ ▶" to "הזזת הפינה · בהקלטה: 30 שנ' (ארוך = 5 דק')",
             "1 2" to "מעבר ישיר לערוץ",
@@ -1072,7 +1072,6 @@ class MainActivity : Activity() {
         showTsPanel(4000)
     }
 
-    private fun isPaused() = tsOn && !main.player.playWhenReady
 
     private val hideTsPanel = Runnable {
         if (!main.player.playWhenReady) return@Runnable   // מושהה: הפס נשאר
@@ -1168,7 +1167,7 @@ class MainActivity : Activity() {
         tsTo.text = if (prog != null) hhmm.format(Date(to)) else "חי"
         val nowProg = Epg.now(ch.epg)
         tsLive.text = (nowProg?.let { "בשידור החי: ${it.name}  ·  " } ?: "") +
-            (if (paused) "OK = המשך  ·  " else "") +
+            (if (paused) "OK = המשך  ·  " else "OK = השהיה  ·  ") +
             (if (pipOn) "חזור = לשידור החי" else "▶ 30 שנ' אחורה · ◀ קדימה (ארוך 5 דק')  ·  חזור = לשידור החי")
     }
 
@@ -1378,8 +1377,8 @@ class MainActivity : Activity() {
         if (isOkKey(keyCode)) {
             // אחרי לחיצה ארוכה האירוע מסומן כמבוטל, ואז לא עושים כלום
             if (event.isTracking && !event.isCanceled && !guideOpen && !allOpen) {
-                // מושהה: OK = המשך. אחרת: פינה / החלפה כמו תמיד
-                if (isPaused()) togglePause() else if (pipOn) swapPip() else openPip()
+                // בהקלטה: OK = השהיה/המשך (בקשת המשתמש). בשידור חי: פינה / החלפה כמו תמיד
+                if (tsOn) togglePause() else if (pipOn) swapPip() else openPip()
             }
             return true
         }
