@@ -777,7 +777,7 @@ class MainActivity : Activity() {
             setPadding(dp(4), dp(8), dp(4), 0)
         }
         val footer = text(13f, Color.argb(160, 255, 255, 255)).apply {
-            this.text = "▲▼ ערוץ  ·  ◀▶ חצי שעה אחורה/קדימה  ·  OK מעבר לערוץ  ·  חזור לסגירה  ·  לוח: פישנזון"
+            this.text = "▲▼ ערוץ  ·  ▶ חצי שעה אחורה · ◀ קדימה  ·  OK מעבר לערוץ  ·  חזור לסגירה  ·  לוח: פישנזון"
             setPadding(0, dp(10), 0, 0)
         }
         return LinearLayout(this).apply {
@@ -1109,7 +1109,7 @@ class MainActivity : Activity() {
         val nowProg = Epg.now(ch.epg)
         tsLive.text = (nowProg?.let { "בשידור החי: ${it.name}  ·  " } ?: "") +
             (if (paused) "OK = המשך  ·  " else "") +
-            (if (pipOn) "חזור = לשידור החי" else "◀▶ 30 שנ' (ארוך 5 דק')  ·  חזור = לשידור החי")
+            (if (pipOn) "חזור = לשידור החי" else "▶ 30 שנ' אחורה · ◀ קדימה (ארוך 5 דק')  ·  חזור = לשידור החי")
     }
 
     // ---------- פעולות ----------
@@ -1217,8 +1217,7 @@ class MainActivity : Activity() {
             when (keyCode) {
                 KeyEvent.KEYCODE_DPAD_UP -> { moveAll(-1); return true }
                 KeyEvent.KEYCODE_DPAD_DOWN -> { moveAll(+1); return true }
-                KeyEvent.KEYCODE_DPAD_RIGHT -> { shiftAll(+1); return true }
-                KeyEvent.KEYCODE_DPAD_LEFT -> { shiftAll(-1); return true }
+                KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_LEFT -> { shiftAll(rtlDir(keyCode)); return true }
                 KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> { allOk(); return true }
                 KeyEvent.KEYCODE_BACK -> { closeAll(); return true }
                 else -> closeAll()
@@ -1250,7 +1249,7 @@ class MainActivity : Activity() {
                 KeyEvent.KEYCODE_MEDIA_REWIND -> { skip(-SKIP_MS); return true }
                 KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> { skip(SKIP_MS); return true }
                 KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> if (!pipOn) {
-                    val dir = if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) 1 else -1
+                    val dir = rtlDir(keyCode)
                     if (event.repeatCount == 0) { longSkipAt = 0L; event.startTracking() }
                     else if (longSkipAt != 0L && event.eventTime - longSkipAt > 700) {
                         // ממשיכים להחזיק: עוד 5 דקות כל 0.7 שניות
@@ -1295,7 +1294,7 @@ class MainActivity : Activity() {
         if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN) { togglePause(); return true }
         if (tsOn && !pipOn && (keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT)) {
             longSkipAt = event.eventTime
-            skip((if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) 1 else -1) * LONG_SKIP_MS)
+            skip(rtlDir(keyCode) * LONG_SKIP_MS)
             return true
         }
         return super.onKeyLongPress(keyCode, event)
@@ -1311,7 +1310,7 @@ class MainActivity : Activity() {
         if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
             // לחיצה קצרה במצב מאחור = 30 שניות (אחרי לחיצה ארוכה האירוע מבוטל)
             if (tsOn && !pipOn && event.isTracking && !event.isCanceled) {
-                skip((if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) 1 else -1) * SKIP_MS)
+                skip(rtlDir(keyCode) * SKIP_MS)
             }
             longSkipAt = 0L
             return true
@@ -1326,6 +1325,9 @@ class MainActivity : Activity() {
         }
         return super.onKeyUp(keyCode, event)
     }
+
+    /** כיוון זמן מימין לשמאל (בקשת המשתמש): ימינה = אחורה, שמאלה = קדימה. */
+    private fun rtlDir(k: Int) = if (k == KeyEvent.KEYCODE_DPAD_LEFT) 1 else -1
 
     private fun isOkKey(k: Int) = k == KeyEvent.KEYCODE_DPAD_CENTER || k == KeyEvent.KEYCODE_ENTER ||
         k == KeyEvent.KEYCODE_NUMPAD_ENTER
